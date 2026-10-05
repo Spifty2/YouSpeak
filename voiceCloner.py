@@ -87,14 +87,29 @@ def load_sound(name):
 
 def add_sound(name, audio_path, transcript):
     name = "".join(c for c in name if c.isalnum() or c in "-_ ").strip()
+    audio_path = audio_path.strip()
+    if (
+        len(audio_path) >= 2
+        and audio_path[0] == audio_path[-1]
+        and audio_path[0] in {'"', "'"}
+    ):
+        audio_path = audio_path[1:-1]
+    audio_file = Path(audio_path)
+    if not audio_file.is_file():
+        raise FileNotFoundError(f"Reference audio file not found: {audio_file}")
+
     folder = Sounds_DIR / name
     folder.mkdir(parents=True, exist_ok=True)
-    shutil.copy(audio_path, folder / "ref.wav")
+    shutil.copy(audio_file, folder / "ref.wav")
     (folder / "ref.txt").write_text(transcript.strip(), encoding="utf-8")
     return name
 
 def finish_adding_sound(name, audio_path, transcript):
-    add_sound(name, audio_path, transcript)
+    try:
+        add_sound(name, audio_path, transcript)
+    except FileNotFoundError as error:
+        messagebox.showerror("Invalid audio file", str(error))
+        return
     refresh_voice_list()
     print(f"Added new voice: {name}")
 
