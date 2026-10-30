@@ -9,7 +9,6 @@ import winsound
 import time 
 from pathlib import Path
 import shutil
-import subprocess
 import queue
 import tempfile
 import threading
@@ -31,6 +30,8 @@ text_entry = ttk.Entry(window, width=50)
 text_entry.pack(pady=5)
 clone_status_label = ttk.Label(window, text="")
 clone_status_label.pack(pady=5)
+Selected_Output_path = ttk.Button(window, text="Select Output Directory", command=lambda: select_output_folder())
+Selected_Output_path.pack(pady=5)
 enter_button = ttk.Button(window, text="Clone Voice", command=lambda: clone_voice(text_entry.get()))
 enter_button.pack(pady=5)
 output_button = ttk.Button(window, text="Outputs", command=lambda: open_output_window())
@@ -39,6 +40,22 @@ output_button.pack(pady=5)
 BASE_DIR = Path(__file__).resolve().parent
 Sounds_DIR = BASE_DIR / "Sounds"
 Sounds_DIR.mkdir(exist_ok=True)
+global globalfolder_selected
+globalfolder_selected = False
+
+def select_output_folder():
+    global Selected_Output_path
+    folder = filedialog.askdirectory(
+        parent=window,
+        title="Please create or select an output folder for the generated audio files.",
+    )
+    if folder:
+        Selected_Output_path = Path(folder)
+        messagebox.showinfo("Output Directory Selected", f"Output directory set to: {Selected_Output_path}")
+        global globalfolder_selected
+        globalfolder_selected = True
+    else:
+        messagebox.showwarning("No Directory Selected", "No output directory was selected.")
 
 def refresh_voice_list():
     voice_list.delete(0, tk.END)
@@ -331,9 +348,16 @@ def open_add_voice_window():
         def finish_with_path(path):
             name = enter_name_entry.get()
             transcript = transcript_entry.get()
+            shorten_audio_enabled = shorten_audio_flag.get()
 
             def save_voice(report_status):
-                return add_sound(name, str(path), transcript, report_status)
+                return add_sound(
+                    name,
+                    str(path),
+                    transcript,
+                    report_status,
+                    shorten=shorten_audio_enabled,
+                )
 
             def voice_added(added_name):
                 refresh_voice_list()
@@ -450,7 +474,7 @@ def open_output_window():
             messagebox.showwarning("Select an output", "Choose an output file to play.")
             return
 
-        output_path = BASE_DIR / output_list.get(selection[0])
+        output_path = Selected_Output_path / output_list.get(selection[0])
         if not output_path.is_file():
             messagebox.showerror("Output not found", f"Output audio file not found: {output_path}")
             return
@@ -466,13 +490,38 @@ def open_output_window():
     def stop_output_playback():
         winsound.PlaySound(None, winsound.SND_PURGE)
 
+    def download_selected_output():
+        selection = output_list.curselection()
+        if not selection:
+            messagebox.showwarning("Select an output", "Choose an output file to download.")
+            return
+
+        output_path = Selected_Output_path / output_list.get(selection[0])
+        if not output_path.is_file():
+            messagebox.showerror("Output not found", f"Output audio file not found: {output_path}")
+            return
+
+        save_path = filedialog.asksaveasfilename(
+            parent=output_window,
+            title="Save Output Audio",
+            defaultextension=".wav",
+            filetypes=[("WAV files", "*.wav")],
+            initialfile=output_path.name,
+        )
+        if save_path:
+            try:
+                shutil.copy(output_path, save_path)
+                messagebox.showinfo("Download Complete", f"Output audio saved as {save_path}")
+            except OSError as error:
+                messagebox.showerror("Download failed", str(error))
+
     def delete_selected_output():
         selection = output_list.curselection()
         if not selection:
             messagebox.showwarning("Select an output", "Choose an output file to delete.")
             return
 
-        output_path = BASE_DIR / output_list.get(selection[0])
+        output_path = Selected_Output_path / output_list.get(selection[0])
         if not output_path.is_file():
             messagebox.showerror("Output not found", f"Output audio file not found: {output_path}")
             return
@@ -490,6 +539,7 @@ def open_output_window():
     controls.pack(pady=5)
     ttk.Button(controls, text="Play", command=play_selected_output).pack(side=tk.LEFT, padx=5)
     ttk.Button(controls, text="Stop", command=stop_output_playback).pack(side=tk.LEFT, padx=5)
+    ttk.Button(controls, text="Download", command=download_selected_output).pack(side=tk.LEFT, padx=5)
     ttk.Button(controls, text="Delete", command=delete_selected_output).pack(side=tk.LEFT, padx=5)
     def close_output_window():
         stop_output_playback()
@@ -539,40 +589,9 @@ def download_youtube_audio(url, output_path, progress_callback=None):
     if not source_path.is_file():
         raise RuntimeError(f"YouTube download did not create the expected audio file: {source_path}")
 
-    ffmpeg_path = shutil.which("ffmpeg")
-    if ffmpeg_path is None:
-        raise RuntimeError(
-            "FFmpeg is required to convert the downloaded audio to WAV. "
-            "Install FFmpeg and make sure 'ffmpeg' is on PATH."
-        )
-
     if progress_callback:
-        progress_callback("Converting downloaded audio to WAV (FFmpeg)...")
-    try:
-        subprocess.run(
-            [
-                ffmpeg_path,
-                "-y",
-                "-i",
-                str(source_path),
-                "-vn",
-                "-acodec",
-                "pcm_s16le",
-                str(output_path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(
-            "FFmpeg did not finish converting the audio within 5 minutes. "
-            "Try a shorter YouTube video."
-        ) from error
-    except subprocess.CalledProcessError as error:
-        details = error.stderr.strip() if error.stderr else str(error)
-        raise RuntimeError(f"FFmpeg could not convert the YouTube audio to WAV: {details}") from error
+        progress_callback("Converting downloaded audio to WAV...")
+    convert_audio_to_wav(source_path, output_path)
 
     if not output_path.is_file():
         raise RuntimeError(f"YouTube audio download did not create the expected file: {output_path}")
@@ -608,7 +627,7 @@ voice_list.insert(tk.END, *voices)
 
 def list_outputs():
     return sorted(
-        p.name for p in BASE_DIR.iterdir()
+        p.name for p in Selected_Output_path.iterdir()
         if p.suffix == ".wav"
     )
 
@@ -619,7 +638,7 @@ def load_sound(name):
     return ref_audio, ref_text
 
 
-def add_sound(name, audio_path, transcript, progress_callback=None):
+def add_sound(name, audio_path, transcript, progress_callback=None, shorten=False):
     name = "".join(c for c in name if c.isalnum() or c in "-_ ").strip()
     audio_path = audio_path.strip()
     if (
@@ -634,9 +653,14 @@ def add_sound(name, audio_path, transcript, progress_callback=None):
 
     folder = Sounds_DIR / name
     folder.mkdir(parents=True, exist_ok=True)
-    if progress_callback:
-        progress_callback("Converting reference audio to WAV...")
-    convert_audio_to_wav(audio_file, folder / "ref.wav")
+    if shorten:
+        if progress_callback:
+            progress_callback("Shortening reference audio to 10 seconds...")
+        shorten_audio(audio_file, folder / "ref.wav")
+    else:
+        if progress_callback:
+            progress_callback("Converting reference audio to WAV...")
+        convert_audio_to_wav(audio_file, folder / "ref.wav")
     if progress_callback:
         progress_callback("Saving transcript...")
     (folder / "ref.txt").write_text(transcript.strip(), encoding="utf-8")
@@ -647,14 +671,12 @@ def shorten_audio(input_path, output_path, max_duration=10):
         audio = AudioSegment.from_file(input_path)
         if len(audio) > max_duration * 1000:
             audio = audio[:max_duration * 1000]
-            audio.export(output_path, format="wav")
-            tk.messagebox.showinfo("Audio Shortened", f"Audio shortened to {max_duration} seconds and saved as {output_path.name}.")
-        else:
-            shutil.copy(input_path, output_path)
-            tk.messagebox.showinfo("Audio Not Shortened", f"Audio is already shorter than {max_duration} seconds. Copied to {output_path.name}.")
-    except Exception as e:
-        tk.messagebox.showerror("Shortening Failed", f"Failed to shorten audio file {input_path}: {e}")
-        raise RuntimeError(f"Failed to shorten audio file {input_path}: {e}")
+        audio.export(output_path, format="wav")
+    except Exception as error:
+        raise RuntimeError(
+            f"Failed to shorten audio file {input_path}: {error}. "
+            "Please ensure FFmpeg is installed and accessible."
+        ) from error
 
 def finish_adding_sound(name, audio_path, transcript):
     try:
@@ -681,8 +703,9 @@ print("Voices:", ", ".join(voices) if voices else "(none yet)")
 
 def clone_voice(text):
     selection = voice_list.curselection()
-    if not selection:
-        messagebox.showwarning("Select a voice", "Choose a voice before cloning.")
+    Selected_Output = globals().get("Selected_Output_path", BASE_DIR / "Outputs")
+    if globalfolder_selected == False:
+        messagebox.showwarning("Select an output directory", "Please select a valid output directory before cloning.")
         return
 
     voice_choice = voice_list.get(selection[0])
@@ -700,7 +723,9 @@ def clone_voice(text):
             ref_audio=ref_audio_path,
             ref_text=ref_text,
         )
-        output_path = BASE_DIR / f"output_{voice_choice}_{int(time.time())}.wav"
+
+        DOWNLOAD_DIR = Selected_Output  
+        output_path = DOWNLOAD_DIR / f"output_{voice_choice}_{int(time.time())}.wav"
         report_status("Saving generated audio...")
         sf.write(str(output_path), wavs[0], samplerate=sample_rate)
         return output_path
