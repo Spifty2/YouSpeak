@@ -1,3 +1,5 @@
+import os
+import sys
 import soundfile as sf
 import tkinter as tk
 from tkinter import messagebox
@@ -19,8 +21,8 @@ window = tk.Tk()
 window.title("YouSpeak - Voice Cloning")
 window.header = ttk.Label(window, text="YouSpeak - Voice Cloning", font=("Helvetica", 16))
 window.header.pack(pady=10)
-window.geometry("800x600")
-window.configure(bg="#8eacaa")
+window.geometry("600x400")
+window.configure(bg="#000e3e")
 voice_list = tk.Listbox(window, height=5, selectmode=tk.SINGLE)
 add_button = ttk.Button(window, text="Add New Voice", command=lambda: open_add_voice_window())
 add_button.pack(pady=5)
@@ -37,9 +39,13 @@ enter_button.pack(pady=5)
 output_button = ttk.Button(window, text="Outputs", command=lambda: open_output_window())
 output_button.pack(pady=5)
 
-BASE_DIR = Path(__file__).resolve().parent
-Sounds_DIR = BASE_DIR / "Sounds"
-Sounds_DIR.mkdir(exist_ok=True)
+if getattr(sys, "frozen", False):
+    DATA_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "YouSpeak"
+else:
+    DATA_DIR = Path(__file__).resolve().parent
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+Sounds_DIR = DATA_DIR / "Sounds"
+Sounds_DIR.mkdir(parents=True, exist_ok=True)
 global globalfolder_selected
 globalfolder_selected = False
 
@@ -136,7 +142,7 @@ def open_add_voice_window():
     download_started_at = None
     download_status_text = ""
     download_results = queue.Queue()
-    shorten_audio_flag = tk.BooleanVar(value=False)
+    shorten_audio_flag = tk.BooleanVar(value=True)
 
     def cleanup_download_temp_dir():
         nonlocal download_temp_dir, downloaded_youtube_path
@@ -311,7 +317,7 @@ def open_add_voice_window():
         def convert_audio(path):
             def convert(report_status):
                 report_status("Converting audio to WAV...")
-                convert_audio_to_wav(path, BASE_DIR / "temp.wav")
+                convert_audio_to_wav(path, DATA_DIR / "temp.wav")
 
             def conversion_complete(_result):
                 status_label.configure(text="WAV conversion complete.")
@@ -422,7 +428,7 @@ def open_add_voice_window():
             parent=add_voice_window,
         )
 
-    add_voice_window = tk.Toplevel(window, bg="#8eacaa")
+    add_voice_window = tk.Toplevel(window, bg="#000e3e")
     add_voice_window.header = ttk.Label(add_voice_window, text="Add New Voice", font=("Helvetica", 14))
     add_voice_window.header.pack(pady=10)
     add_voice_window.geometry("500x500")
@@ -460,7 +466,7 @@ def open_add_voice_window():
     add_voice_window.protocol("WM_DELETE_WINDOW", close_add_voice_window)
 
 def open_output_window():
-    output_window = tk.Toplevel(window)
+    output_window = tk.Toplevel(window, bg="#000e3e")
     output_window.title("Output Audio Files")
     output_window.geometry("400x300")
     output_list = tk.Listbox(output_window, height=10, selectmode=tk.SINGLE)
@@ -559,8 +565,16 @@ def download_youtube_audio(url, output_path, progress_callback=None):
         if not progress_callback:
             return
         if progress.get("status") == "downloading":
-            percent = progress.get("_percent_str", "").strip()
-            progress_callback(f"Downloading YouTube audio... {percent}")
+            percent = (progress.get("_percent_str") or "").strip()
+            details = []
+            speed = (progress.get("_speed_str") or "").strip()
+            eta = (progress.get("_eta_str") or "").strip()
+            if speed and speed != "NA":
+                details.append(speed)
+            if eta and eta != "NA":
+                details.append(f"ETA {eta}")
+            detail_text = f" ({', '.join(details)})" if details else ""
+            progress_callback(f"Downloading YouTube audio... {percent}{detail_text}")
         elif progress.get("status") == "finished":
             progress_callback("Download finished. Preparing audio for conversion...")
 
@@ -569,8 +583,8 @@ def download_youtube_audio(url, output_path, progress_callback=None):
         "outtmpl": str(output_path.with_name("reference.%(ext)s")),
         "progress_hooks": [report_progress],
         "socket_timeout": 30,
-        "retries": 2,
-        "fragment_retries": 2,
+        "retries": 10,
+        "fragment_retries": 10,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -703,7 +717,7 @@ print("Voices:", ", ".join(voices) if voices else "(none yet)")
 
 def clone_voice(text):
     selection = voice_list.curselection()
-    Selected_Output = globals().get("Selected_Output_path", BASE_DIR / "Outputs")
+    Selected_Output = globals().get("Selected_Output_path", DATA_DIR / "Outputs")
     if globalfolder_selected == False:
         messagebox.showwarning("Select an output directory", "Please select a valid output directory before cloning.")
         return
